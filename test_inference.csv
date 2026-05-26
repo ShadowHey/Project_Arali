@@ -1,0 +1,5 @@
+item_id,timestamp,category,quantity,price,customer_region
+item_001,2026-05-25T12:00:00Z,Electronics,2,299.99,NorthAmerica
+item_002,2026-05-25T12:05:00Z,Apparel,1,49.99,Europe
+item_003,2026-05-25T12:10:00Z,HomeDecor,4,19.99,Asia
+item_004,2026-05-25T12:15:00Z,Electronics,1,899.99,SouthAmerica
