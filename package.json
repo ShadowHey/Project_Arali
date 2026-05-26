@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"vite\" \"node server.js\"",
+    "dev:client": "vite",
+    "dev:server": "node server.js",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -12,11 +14,15 @@
   "dependencies": {
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jspdf": "^4.2.1",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "resend": "^6.12.4",
+    "usesend-js": "^1.6.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

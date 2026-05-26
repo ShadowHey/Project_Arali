@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { jsPDF } from 'jspdf';
 import './App.css';
 
 // Organization List with unique webhook URLs for each
@@ -29,6 +30,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorText, setErrorText] = useState(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [invoiceStatus, setInvoiceStatus] = useState(null);
 
   const fileInputRef = useRef(null);
   const dropdownRef = useRef(null);
@@ -145,6 +147,7 @@ function App() {
     setErrorText(null);
     setFilesList([]);
     setDropdownOpen(false);
+    setInvoiceStatus(null);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -254,6 +257,267 @@ function App() {
     );
   };
 
+  const generateInvoicePdf = async () => {
+    if (!jsonOutput) return;
+
+    setInvoiceStatus('generating');
+    try {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Extract billing data — handle both direct object and array response
+      const rawData = Array.isArray(jsonOutput) ? jsonOutput[0] : jsonOutput;
+      const summary = billingSummary || rawData || {};
+      const orgName = selectedOrg?.label || String(summary.organization || 'N/A').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const totalAmt = Number(summary.total_billing_amt) || 0;
+      const scheme = summary.costing_scheme || '';
+      const today = new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
+      const dueDate = new Date(Date.now() + 30 * 86400000).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
+      const invoiceNo = `INV-${Date.now().toString(36).toUpperCase()}`;
+
+      const fmt = (n) => {
+        try {
+          return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', currencyDisplay: 'code', maximumFractionDigits: 0 }).format(n);
+        } catch {
+          return `INR ${n.toLocaleString('en-IN')}`;
+        }
+      };
+
+      const titleCase = (s) => String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+      // Header
+      doc.setFillColor(41, 128, 185);
+      doc.rect(0, 0, pageWidth, 40, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(22);
+      doc.setFont('helvetica', 'bold');
+      doc.text('BILLING INVOICE', pageWidth / 2, 18, { align: 'center' });
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Invoice #: ${invoiceNo}`, pageWidth / 2, 28, { align: 'center' });
+      doc.text(`Date: ${today}  |  Due: ${dueDate}`, pageWidth / 2, 34, { align: 'center' });
+
+      // From / To
+      doc.setTextColor(0, 0, 0);
+      let y = 55;
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('From:', 14, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Zaggle', 14, y + 6);
+
+      doc.setFont('helvetica', 'bold');
+      doc.text('Bill To:', 120, y);
+      doc.setFont('helvetica', 'normal');
+      const nameLines = doc.splitTextToSize(orgName, pageWidth - 120 - 14);
+      doc.text(nameLines, 120, y + 6);
+
+      // Summary box
+      y = 80;
+      doc.setFillColor(245, 247, 250);
+      doc.roundedRect(14, y, pageWidth - 28, 24, 3, 3, 'F');
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(107, 114, 128);
+      doc.text('TOTAL BILLING', 20, y + 8);
+      doc.text('COSTING SCHEME', 100, y + 8);
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(12);
+      doc.text(fmt(totalAmt), 20, y + 18);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      const schemeLines = doc.splitTextToSize(scheme, pageWidth - 114);
+      doc.text(schemeLines, 100, y + 17);
+
+      // Itemized table from JSON
+      y = 114;
+      const jsonData = rawData?.json || jsonOutput;
+      let items = [];
+
+      if (Array.isArray(jsonData)) {
+        items = jsonData;
+      } else if (typeof jsonData === 'object' && jsonData !== null) {
+        const arrayKey = Object.keys(jsonData).find(k => Array.isArray(jsonData[k]));
+        if (arrayKey) {
+          items = jsonData[arrayKey];
+        } else {
+          items = Object.entries(jsonData)
+            .filter(([, v]) => typeof v !== 'object')
+            .map(([k, v]) => ({ key: k, value: v }));
+        }
+      }
+
+      if (items.length > 0) {
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('ITEMIZED BREAKDOWN', 14, y);
+        y += 6;
+
+        const cols = items.length > 0 ? Object.keys(items[0]).slice(0, 5) : [];
+        const colWidth = (pageWidth - 28) / Math.max(cols.length, 1);
+
+        // Table header
+        doc.setFillColor(41, 128, 185);
+        doc.rect(14, y, pageWidth - 28, 8, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8);
+        cols.forEach((col, i) => {
+          const label = titleCase(col).toUpperCase();
+          doc.text(label.substring(0, 22), 16 + i * colWidth, y + 5.5);
+        });
+
+        // Table rows
+        doc.setTextColor(0, 0, 0);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        const maxRows = Math.min(items.length, 40);
+
+        for (let i = 0; i < maxRows; i++) {
+          const rowY = y + 8 + i * 7;
+
+          if (rowY > 270) {
+            doc.addPage();
+            y = 20 - 8 - i * 7;
+            continue;
+          }
+
+          const bgColor = i % 2 === 0 ? 250 : 255;
+          doc.setFillColor(bgColor, bgColor, bgColor);
+          doc.rect(14, rowY, pageWidth - 28, 7, 'F');
+
+          cols.forEach((col, j) => {
+            let val = items[i][col];
+            if (val === null || val === undefined) val = '';
+            if (typeof val === 'number') {
+              val = col.toLowerCase().includes('amount') || col.toLowerCase().includes('amt') || col.toLowerCase().includes('price') || col.toLowerCase().includes('billing')
+                ? fmt(val)
+                : val.toLocaleString('en-IN');
+            } else {
+              val = titleCase(val);
+            }
+            val = String(val).substring(0, 28);
+            doc.text(val, 16 + j * colWidth, rowY + 5);
+          });
+        }
+
+        if (items.length > maxRows) {
+          const moreY = y + 8 + maxRows * 7 + 4;
+          doc.setFontSize(8);
+          doc.setTextColor(107, 114, 128);
+          doc.text(`... and ${items.length - maxRows} more rows`, 14, moreY);
+        }
+      }
+
+      // Footer
+      const lastPage = doc.internal.getNumberOfPages();
+      doc.setPage(lastPage);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(128, 128, 128);
+      doc.text('This is a system-generated billing invoice.', pageWidth / 2, 280, { align: 'center' });
+      doc.text('Payment terms: Net 30', pageWidth / 2, 286, { align: 'center' });
+
+      // Total bar at bottom
+      doc.setFillColor(41, 128, 185);
+      doc.rect(0, 290, pageWidth, 8, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Total: ${fmt(totalAmt)}`, pageWidth / 2, 295.5, { align: 'center' });
+
+      const filename = `invoice-${orgName.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      doc.save(filename);
+
+      // Extract base64 for email attachment
+      let pdfBase64;
+      try {
+        const dataUri = doc.output('datauristring');
+        pdfBase64 = dataUri.split(',')[1];
+      } catch {}
+
+      // Build email HTML
+      const emailFmt = (n) => {
+        try {
+          return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', currencyDisplay: 'code', maximumFractionDigits: 0 }).format(n);
+        } catch {
+          return `INR ${n.toLocaleString('en-IN')}`;
+        }
+      };
+
+      const itemRows = items.map((item) => {
+        const cells = Object.entries(item).map(([k, v]) => {
+          let display = v;
+          if (typeof v === 'number') {
+            display = k.toLowerCase().includes('amount') || k.toLowerCase().includes('amt')
+              ? emailFmt(v)
+              : v.toLocaleString('en-IN');
+          } else {
+            display = titleCase(String(v));
+          }
+          return `<td style="padding:8px;border-bottom:1px solid #eee;">${display}</td>`;
+        }).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('');
+
+      const headerCells = Object.keys(items[0] || {}).map(k =>
+        `<th style="padding:10px;text-align:left;">${titleCase(k)}</th>`
+      ).join('');
+
+      const emailHtml = `<!DOCTYPE html>
+<html><body style="font-family:Helvetica,Arial,sans-serif;color:#111;background:#f6f6f6;padding:24px;">
+<div style="max-width:640px;margin:0 auto;background:#fff;padding:32px;border-radius:8px;">
+  <h1 style="margin:0 0 8px;color:#2980b9;">Billing Invoice</h1>
+  <p style="margin:0 0 16px;color:#111;">Invoice for <strong>${orgName}</strong></p>
+  <table style="width:100%;margin:16px 0;border-collapse:collapse;font-size:14px;">
+    <tr><td style="padding:4px 0;color:#666;">Date</td><td>${today}</td></tr>
+    <tr><td style="padding:4px 0;color:#666;">Due Date</td><td>${dueDate}</td></tr>
+    <tr><td style="padding:4px 0;color:#666;">From</td><td>Zaggle</td></tr>
+    <tr><td style="padding:4px 0;color:#666;">Bill To</td><td>${orgName}</td></tr>
+  </table>
+  <table style="width:100%;margin-top:16px;border-collapse:collapse;font-size:14px;">
+    <thead><tr style="background:#2980b9;color:#fff;">${headerCells}</tr></thead>
+    <tbody>${itemRows}</tbody>
+  </table>
+  <p style="margin-top:16px;font-size:16px;font-weight:bold;">Total: ${emailFmt(totalAmt)}</p>
+  <p style="margin-top:24px;color:#888;font-size:12px;">Payment terms: Net 30.</p>
+</div></body></html>`;
+
+      // Send email
+      setInvoiceStatus('sending');
+      try {
+        const res = await fetch('/api/send-invoice-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: 'devesh@arali.ai',
+            cc: ['akshat@arali.ai'],
+            subject: `Billing Invoice — ${orgName} — ${today}`,
+            html: emailHtml,
+            pdfBase64,
+            pdfFilename: filename,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.error('Email failed:', err);
+          setInvoiceStatus('pdf-only');
+          setTimeout(() => setInvoiceStatus(null), 3000);
+          return;
+        }
+        setInvoiceStatus('done');
+        setTimeout(() => setInvoiceStatus(null), 3000);
+      } catch (emailErr) {
+        console.error('Email send error:', emailErr);
+        setInvoiceStatus('pdf-only');
+        setTimeout(() => setInvoiceStatus(null), 3000);
+      }
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      setInvoiceStatus('error');
+      setTimeout(() => setInvoiceStatus(null), 3000);
+    }
+  };
+
   return (
     <>
       {/* HEADER SECTION */}
@@ -360,6 +624,30 @@ function App() {
               <line x1="14" y1="11" x2="14" y2="17"></line>
             </svg>
             Clear All
+          </button>
+
+          {/* GENERATE INVOICE PDF PILL */}
+          <button
+            type="button"
+            className="btn-pill"
+            disabled={!jsonOutput || isLoading || invoiceStatus === 'generating'}
+            onClick={generateInvoicePdf}
+            style={{
+              backgroundColor: '#10B981',
+              color: 'white',
+              border: 'none',
+              opacity: (!jsonOutput || isLoading || invoiceStatus === 'generating') ? 0.6 : 1,
+              cursor: (!jsonOutput || isLoading || invoiceStatus === 'generating') ? 'not-allowed' : 'pointer'
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            {invoiceStatus === 'generating' ? 'Generating...' : invoiceStatus === 'sending' ? 'Sending Email...' : invoiceStatus === 'done' ? 'Sent!' : invoiceStatus === 'pdf-only' ? 'PDF Downloaded (email failed)' : invoiceStatus === 'error' ? 'Failed' : 'Generate Invoice PDF'}
           </button>
 
         </section>
