@@ -490,7 +490,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: 'devesh@arali.ai',
-            cc: ['akshat@arali.ai'],
+            cc: ['akshat@arali.ai', 'suraj.malik@zaggle.in'],
             subject: `Billing Invoice — ${orgName} — ${today}`,
             html: emailHtml,
             pdfBase64,
