@@ -1,13 +1,17 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import { Resend } from "resend";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-const PORT = process.env.SERVER_PORT || 3001;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 3001;
 const FROM_EMAIL = process.env.FROM_EMAIL || "Arali <no-reply@arali.ai>";
 
 let cached = null;
@@ -55,6 +59,12 @@ app.post("/api/send-invoice-email", async (req, res) => {
 
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
+app.use(express.static(path.join(__dirname, "dist")));
+
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
+});
+
 app.listen(PORT, () => {
-  console.log(`Invoice email server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
